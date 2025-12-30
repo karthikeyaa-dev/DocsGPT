@@ -136,7 +136,7 @@ class Settings(BaseSettings):
         "docsgpts"  # Name of the table to use for storing vectors
     )
 
-    FLASK_DEBUG_MODE: bool = False
+    FLASK_DEBUG_MODE: bool = True
     STORAGE_TYPE: str = "local"  # local or s3
     URL_STRATEGY: str = "backend"  # backend or s3
 
@@ -154,9 +154,13 @@ class Settings(BaseSettings):
     # Conversation Compression Settings
     ENABLE_CONVERSATION_COMPRESSION: bool = True
     COMPRESSION_THRESHOLD_PERCENTAGE: float = 0.8  # Trigger at 80% of context
-    COMPRESSION_MODEL_OVERRIDE: Optional[str] = None  # Use different model for compression
+    COMPRESSION_MODEL_OVERRIDE: Optional[str] = (
+        None  # Use different model for compression
+    )
     COMPRESSION_PROMPT_VERSION: str = "v1.0"  # Track prompt iterations
-    COMPRESSION_MAX_HISTORY_POINTS: int = 3  # Keep only last N compression points to prevent DB bloat
+    COMPRESSION_MAX_HISTORY_POINTS: int = (
+        3  # Keep only last N compression points to prevent DB bloat
+    )
 
 
 # Project root is one level above application/

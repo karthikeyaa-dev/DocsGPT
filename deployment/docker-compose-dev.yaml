@@ -13,7 +13,18 @@ services:
     volumes:
       - mongodb_data_container:/data/db
 
-
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: user           # Default username (you can change this)
+      POSTGRES_PASSWORD: password   # Default password (you can change this)
+      POSTGRES_DB: docsgpt         # Default database name (you can change this)
+    ports:
+      - 5432:5432                  # Exposes PostgreSQL on port 5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Named volume for persistent storage
 
 volumes:
   mongodb_data_container:
+  postgres_data:
+
