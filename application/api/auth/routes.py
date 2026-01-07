@@ -140,8 +140,11 @@ def refresh_token_endpoint(validated_data):
     if not device_id:
         raise MissingDeviceID()
 
+    # NOTE : Take this from frontend
     ip_address = request.headers.get("X-Forwarded-For", request.remote_addr)
+    # NOTE : Take this from frontend
     user_agent = request.headers.get("User-Agent")
+    # NOTE : Take this from frontend
     now = datetime.now(timezone.utc)
 
     try:
@@ -175,6 +178,7 @@ def refresh_token_endpoint(validated_data):
                 )
                 raise TokenError("Invalid refresh token. Please login again.")
 
+            # TODO : Write the proper function for auditing the environment
             if audit_token_environment(old_token, ip_address, user_agent):
                 revoke_token_family(
                     db=db.session,
@@ -182,12 +186,15 @@ def refresh_token_endpoint(validated_data):
                 )
                 raise TokenError("Suspicious refresh attempt detected.")
 
+            # INFO : Marking the user passed token as used for generating new one
             old_token.used_at = now
             old_token.revoked = True
             old_token.revoked_at = now
 
+            # INFO : Created new refresh token
             new_refresh_jwt = create_refresh_token(user_id=str(user_id))
 
+            # INFO : Writing into the database about the newly generated refresh token
             new_refresh = RefreshToken(
                 user_id=user_id,
                 jti=UUID(new_refresh_jwt.payload.jti),
@@ -202,6 +209,7 @@ def refresh_token_endpoint(validated_data):
             )
             db.session.add(new_refresh)
 
+        # INFO : Creating new access token
         access = create_access_token(
             user_id=str(old_token.user_id),
             email=old_token.user.email,
