@@ -181,6 +181,13 @@ class RefreshToken(Base):
         index=True,
     )
 
+    child_jti: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("refresh_tokens.jti", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

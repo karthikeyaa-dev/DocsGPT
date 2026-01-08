@@ -18,6 +18,7 @@ from application.api.auth.users.schema import (
     TokenPair,
     LoginResponse,
 )
+from application.api.auth.users.exceptions import TokenError
 from application.api.auth.config import CONFIG
 
 
@@ -273,6 +274,35 @@ def audit_token_environment(old_token, ip_address, user_agent):
         pass  # intentional
     if old_token.ip_address != ip_address:
         pass  # intentional
+
+
+def recreate_refresh_token(refresh_token: RefreshToken) -> RefreshTokenSchema:
+    """
+    Re-create the refresh JWT from DB state for idempotent retry.
+    - Uses existing jti
+    - Uses existing created_at / expires_at
+    - Preserves type, iss, aud, nbf
+    - Fully validated via Pydantic
+    """
+
+    now = datetime.now(timezone.utc)
+    if refresh_token.expires_at <= now:
+        raise TokenError("Refresh token expired")
+
+    payload = RefreshJwtPayload(
+        sub=str(refresh_token.user_id),
+        jti=str(refresh_token.jti),
+        iat=int(refresh_token.created_at.timestamp()),
+        exp=int(refresh_token.expires_at.timestamp()),
+        # nbf=int(refresh_token.created_at.timestamp()),  # optional, sets "not before"
+        iss="DocsGPT",  # replace with config/env if needed
+        aud="User",  # replace with config/env if needed
+        type=TokenType.REFRESH,
+    )
+
+    token = jwt_encode(payload.model_dump(exclude_none=True))
+
+    return RefreshTokenSchema(token=token, payload=payload)
 
 
 """def create_token_pair_with_db(

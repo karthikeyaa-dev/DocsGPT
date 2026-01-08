@@ -56,7 +56,8 @@ def register_user(validated_data):
         with db.session.begin():
             user = User(
                 email=data.email,
-                password=data.password,
+                # INFO : We are hashing the password at database level, so we are not hashing at application level if we hash here we may get dual hashig problem
+                password=data.password,  
                 role=data.role,
                 is_active=True,
             )
@@ -77,7 +78,8 @@ def register_user(validated_data):
 @auth.route("/login", methods=["POST"])
 @validate_schema(input_schema=UserLogin, response_schema=LoginResponse)
 def login_user(validated_data):
-    email = validated_data.email.lower()
+    # INFO : We are normalizing the email in the schema
+    email = validated_data.email
     password = validated_data.password
     device_id = getattr(validated_data, "device_id", None)
 
@@ -131,7 +133,7 @@ def login_user(validated_data):
         raise ApplicationError(str(e))
 
 
-@auth.route("/refresh", methods=["POST"])
+'''@auth.route("/refresh", methods=["POST"])
 @validate_schema(input_schema=RefreshTokenInputSchema, response_schema=LoginResponse)
 def refresh_token_endpoint(validated_data):
     refresh_token_str = validated_data.refresh_token
@@ -172,6 +174,7 @@ def refresh_token_endpoint(validated_data):
                 or old_token.expires_at < now
                 or old_token.device_id != device_id
             ):
+                # INFO : We are revoking the token family if we found old token is used
                 revoke_token_family(
                     db=db.session,
                     root_jti=old_token.parent_jti or old_token.jti,
@@ -230,4 +233,141 @@ def refresh_token_endpoint(validated_data):
 
     except Exception as e:
         db.session.rollback()
+        raise ApplicationError(str(e))
+        # FIX : This comment is used to understand the git stash'''
+
+
+@auth.route("/refresh", methods=["POST"])
+@validate_schema(input_schema=RefreshTokenInputSchema, response_schema=LoginResponse)
+def refresh_token_endpoint(validated_data):
+    refresh_token_str = validated_data.refresh_token
+    device_id = validated_data.device_id
+
+    if not device_id:
+        raise MissingDeviceID()
+
+    ip_address = request.headers.get("X-Forwarded-For", request.remote_addr)
+    user_agent = request.headers.get("User-Agent")
+    now = datetime.now(timezone.utc)
+
+    # 1️⃣ Decode refresh token (outside transaction)
+    try:
+        decoded = decode_refresh_token(refresh_token_str)
+        user_id = UUID(decoded["sub"])
+        jti = UUID(decoded["jti"])
+    except Exception:
+        raise TokenError("Invalid refresh token. Please login again.")
+
+    try:
+        with db.session.begin():
+
+            # 2️⃣ Lock refresh token row
+            old_token: RefreshToken | None = (
+                db.session.query(RefreshToken)
+                .filter_by(jti=jti, user_id=user_id)
+                .with_for_update()
+                .first()
+            )
+
+            if not old_token:
+                raise TokenError("Invalid refresh token. Please login again.")
+
+            # 3️⃣ Hard-fail conditions (always revoke)
+            if old_token.expires_at < now or old_token.device_id != device_id:
+                revoke_token_family(
+                    db=db.session,
+                    root_jti=old_token.parent_jti or old_token.jti,
+                )
+                raise TokenError("Invalid refresh token. Please login again.")
+
+            # 4️⃣ Token already used → retry OR attack
+            if old_token.used_at is not None:
+
+                # 4a️⃣ Environment mismatch → replay attack
+                if audit_token_environment(old_token, ip_address, user_agent):
+                    revoke_token_family(
+                        db=db.session,
+                        root_jti=old_token.parent_jti or old_token.jti,
+                    )
+                    raise TokenError("Refresh token reuse detected.")
+
+                # 4b️⃣ Idempotent retry → return already-issued child
+                child = (
+                    db.session.query(RefreshToken)
+                    .filter_by(jti=old_token.child_jti, revoked=False)
+                    .first()
+                )
+
+                if not child or child.expires_at < now:
+                    raise TokenError("Session expired. Please login again.")
+
+                access = create_access_token(
+                    user_id=str(old_token.user_id),
+                    email=old_token.user.email,
+                    role=old_token.user.role,
+                )
+
+                refresh_jwt = recreate_refresh_jwt(child)
+
+                return LoginResponse(
+                    access_token=access.token,
+                    access_jti=access.payload.jti,
+                    refresh_token=refresh_jwt.token,
+                    refresh_jti=refresh_jwt.payload.jti,
+                    token_type="bearer",
+                )
+
+            # 5️⃣ Normal rotation (first valid use)
+            if audit_token_environment(old_token, ip_address, user_agent):
+                revoke_token_family(
+                    db=db.session,
+                    root_jti=old_token.parent_jti or old_token.jti,
+                )
+                raise TokenError("Suspicious refresh attempt detected.")
+
+            # Mark old token as used
+            old_token.used_at = now
+            old_token.revoked = True
+            old_token.revoked_at = now
+
+            # Create new refresh token
+            new_refresh_jwt = create_refresh_token(user_id=str(user_id))
+
+            new_refresh = RefreshToken(
+                user_id=user_id,
+                jti=UUID(new_refresh_jwt.payload.jti),
+                parent_jti=old_token.jti,
+                device_id=device_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                expires_at=datetime.fromtimestamp(
+                    new_refresh_jwt.payload.exp, tz=timezone.utc
+                ),
+                revoked=False,
+            )
+
+            # 🔑 Link parent → child (IDEMPOTENCY)
+            old_token.child_jti = new_refresh.jti
+
+            db.session.add(new_refresh)
+
+        # 6️⃣ Issue access token AFTER commit
+        access = create_access_token(
+            user_id=str(old_token.user_id),
+            email=old_token.user.email,
+            role=old_token.user.role,
+        )
+
+        return LoginResponse(
+            access_token=access.token,
+            access_jti=access.payload.jti,
+            refresh_token=new_refresh_jwt.token,
+            refresh_jti=new_refresh_jwt.payload.jti,
+            token_type="bearer",
+        )
+
+    except ApplicationError:
+        raise
+
+    except Exception as e:
         raise ApplicationError(str(e))

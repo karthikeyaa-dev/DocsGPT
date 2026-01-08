@@ -63,6 +63,12 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+    # Normalize email to lowercase
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v):
+        return v.strip.lower()
+
 
 class TokenType(str, Enum):
     ACCESS = "Access"
