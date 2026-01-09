@@ -10,6 +10,7 @@ class CONFIG:
     # ------Encode_Credentials------#
     JWT_SECRET_KEY = "fuck-you-nvidea"
     JWT_ALGORITHM = "HS256"
-    EXPIRE_IN_MINUTES = 15
+    ACCESS_TOKEN_EXPIRE_IN_MINUTES = 15
     JWT_TYP = "jwt"
     JWT_KID = "auth-key-v1"
+    REFRESH_TOKEN_EXPIRE_IN_MINUTES = 30

@@ -38,6 +38,7 @@ from application.api.auth.users.jwt import (
     validate_refresh_token,
     generate_new_tokens,
     revoke_token_family,
+    recreate_refresh_token,
     rotate_refresh_token,
     audit_token_environment,
 )
@@ -57,7 +58,7 @@ def register_user(validated_data):
             user = User(
                 email=data.email,
                 # INFO : We are hashing the password at database level, so we are not hashing at application level if we hash here we may get dual hashig problem
-                password=data.password,  
+                password=data.password,
                 role=data.role,
                 is_active=True,
             )
@@ -133,7 +134,7 @@ def login_user(validated_data):
         raise ApplicationError(str(e))
 
 
-'''@auth.route("/refresh", methods=["POST"])
+"""@auth.route("/refresh", methods=["POST"])
 @validate_schema(input_schema=RefreshTokenInputSchema, response_schema=LoginResponse)
 def refresh_token_endpoint(validated_data):
     refresh_token_str = validated_data.refresh_token
@@ -234,7 +235,7 @@ def refresh_token_endpoint(validated_data):
     except Exception as e:
         db.session.rollback()
         raise ApplicationError(str(e))
-        # FIX : This comment is used to understand the git stash'''
+        # FIX : This comment is used to understand the git stash"""
 
 
 @auth.route("/refresh", methods=["POST"])
@@ -246,7 +247,10 @@ def refresh_token_endpoint(validated_data):
     if not device_id:
         raise MissingDeviceID()
 
-    ip_address = request.headers.get("X-Forwarded-For", request.remote_addr)
+    ip_address = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or request.remote_addr
+    )
     user_agent = request.headers.get("User-Agent")
     now = datetime.now(timezone.utc)
 
@@ -307,7 +311,7 @@ def refresh_token_endpoint(validated_data):
                     role=old_token.user.role,
                 )
 
-                refresh_jwt = recreate_refresh_jwt(child)
+                refresh_jwt = recreate_refresh_token(child)
 
                 return LoginResponse(
                     access_token=access.token,

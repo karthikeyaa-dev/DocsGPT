@@ -30,7 +30,7 @@ def create_access_token(
     secret_key: str = CONFIG.JWT_SECRET_KEY,
     issuer: str = "DocsGPT",
     audience: str = "Users",
-    expires_in_minutes: int = CONFIG.EXPIRE_IN_MINUTES,
+    expires_in_minutes: int = CONFIG.ACCESS_TOKEN_EXPIRE_IN_MINUTES,
 ) -> JwtTokenSchema:
     """
     Create a signed JWT access token
@@ -74,7 +74,7 @@ def create_refresh_token(
     secret_key: str = CONFIG.JWT_SECRET_KEY,
     issuer: str = "DocsGPT",
     audience: str = "Users",
-    expires_in_days: int = 30,
+    expires_in_days: int = CONFIG.REFRESH_TOKEN_EXPIRE_IN_MINUTES,
 ) -> RefreshTokenSchema:
     """
     Create a signed JWT refresh token
