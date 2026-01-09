@@ -5,6 +5,7 @@ from flask_migrate import Migrate
 from application.api.auth.models import (
     User,
     UserRole,
+    TokenStatus,
     RefreshToken,
 )
 from application.api.auth.utils.db_connection import DBConnection
@@ -79,7 +80,6 @@ def register_user(validated_data):
 @auth.route("/login", methods=["POST"])
 @validate_schema(input_schema=UserLogin, response_schema=LoginResponse)
 def login_user(validated_data):
-    # INFO : We are normalizing the email in the schema
     email = validated_data.email
     password = validated_data.password
     device_id = getattr(validated_data, "device_id", None)
@@ -97,6 +97,7 @@ def login_user(validated_data):
         if not user.check_password(password):
             raise InvalidCredentials("Password is Incorrect")
 
+        # Create access + refresh token pair
         token_pair = create_token_pair(
             user_id=str(user.id), email=user.email, role=user.role
         )
@@ -104,18 +105,27 @@ def login_user(validated_data):
         ip_address = request.headers.get("X-Forwarded-For", request.remote_addr)
         user_agent = request.headers.get("User-Agent")
 
-        save_refresh_token(
-            db=db.session,
+        # Save the refresh token in DB
+        first_jti = UUID(token_pair.refresh.payload.jti)
+        refresh_token = RefreshToken(
             user_id=user.id,
-            jti=UUID(token_pair.refresh.payload.jti),
-            parent_jti=None,
+            jti=first_jti,
+            session_id=first_jti,  # <-- first token = session
+            parent_jti=None,  # <-- no parent
+            child_jti=None,  # <-- no child yet
             device_id=device_id,
             ip_address=ip_address,
             user_agent=user_agent,
             expires_at=datetime.fromtimestamp(
                 token_pair.refresh.payload.exp, tz=timezone.utc
             ),
+            status=TokenStatus.ACTIVE,
+            # <-- token is active
+            created_at=datetime.now(timezone.utc),
         )
+
+        db.session.add(refresh_token)
+        db.session.commit()  # commit first token
 
         return LoginResponse(
             access_token=token_pair.access.token,
@@ -254,7 +264,7 @@ def refresh_token_endpoint(validated_data):
     user_agent = request.headers.get("User-Agent")
     now = datetime.now(timezone.utc)
 
-    # 1️⃣ Decode refresh token (outside transaction)
+    # 1️⃣ Decode refresh token
     try:
         decoded = decode_refresh_token(refresh_token_str)
         user_id = UUID(decoded["sub"])
@@ -264,8 +274,7 @@ def refresh_token_endpoint(validated_data):
 
     try:
         with db.session.begin():
-
-            # 2️⃣ Lock refresh token row
+            # 2️⃣ Lock token row
             old_token: RefreshToken | None = (
                 db.session.query(RefreshToken)
                 .filter_by(jti=jti, user_id=user_id)
@@ -273,32 +282,29 @@ def refresh_token_endpoint(validated_data):
                 .first()
             )
 
-            if not old_token:
+            if not old_token or old_token.status == TokenStatus.REVOKED:
                 raise TokenError("Invalid refresh token. Please login again.")
 
-            # 3️⃣ Hard-fail conditions (always revoke)
+            # 3️⃣ Hard fail if expired or device mismatch → revoke entire session
             if old_token.expires_at < now or old_token.device_id != device_id:
-                revoke_token_family(
-                    db=db.session,
-                    root_jti=old_token.parent_jti or old_token.jti,
-                )
+                db.session.query(RefreshToken).filter_by(
+                    session_id=old_token.session_id
+                ).update({"status": TokenStatus.REVOKED})
                 raise TokenError("Invalid refresh token. Please login again.")
 
-            # 4️⃣ Token already used → retry OR attack
-            if old_token.used_at is not None:
-
-                # 4a️⃣ Environment mismatch → replay attack
+            # 4️⃣ Token already used → idempotent retry or replay detection
+            if old_token.status == TokenStatus.USED:
+                # 4a️⃣ Check environment for replay attack
                 if audit_token_environment(old_token, ip_address, user_agent):
-                    revoke_token_family(
-                        db=db.session,
-                        root_jti=old_token.parent_jti or old_token.jti,
-                    )
+                    db.session.query(RefreshToken).filter_by(
+                        session_id=old_token.session_id
+                    ).update({"status": TokenStatus.REVOKED})
                     raise TokenError("Refresh token reuse detected.")
 
-                # 4b️⃣ Idempotent retry → return already-issued child
+                # 4b️⃣ Return already-issued child token
                 child = (
                     db.session.query(RefreshToken)
-                    .filter_by(jti=old_token.child_jti, revoked=False)
+                    .filter_by(jti=old_token.child_jti, status=TokenStatus.ACTIVE)
                     .first()
                 )
 
@@ -323,39 +329,42 @@ def refresh_token_endpoint(validated_data):
 
             # 5️⃣ Normal rotation (first valid use)
             if audit_token_environment(old_token, ip_address, user_agent):
-                revoke_token_family(
-                    db=db.session,
-                    root_jti=old_token.parent_jti or old_token.jti,
-                )
+                db.session.query(RefreshToken).filter_by(
+                    session_id=old_token.session_id
+                ).update({"status": TokenStatus.REVOKED})
                 raise TokenError("Suspicious refresh attempt detected.")
 
-            # Mark old token as used
-            old_token.used_at = now
-            old_token.revoked = True
-            old_token.revoked_at = now
+            # Mark old token as USED
 
             # Create new refresh token
             new_refresh_jwt = create_refresh_token(user_id=str(user_id))
-
             new_refresh = RefreshToken(
                 user_id=user_id,
                 jti=UUID(new_refresh_jwt.payload.jti),
                 parent_jti=old_token.jti,
+                child_jti=None,
+                session_id=old_token.session_id,
                 device_id=device_id,
                 ip_address=ip_address,
                 user_agent=user_agent,
                 expires_at=datetime.fromtimestamp(
                     new_refresh_jwt.payload.exp, tz=timezone.utc
                 ),
-                revoked=False,
+                status=TokenStatus.ACTIVE,
+                created_at=datetime.now(timezone.utc),  # <-- important
             )
 
-            # 🔑 Link parent → child (IDEMPOTENCY)
-            old_token.child_jti = new_refresh.jti
-
             db.session.add(new_refresh)
+            db.session.flush()  # ✅ flush ensures new_refresh.jti exists in DB
 
-        # 6️⃣ Issue access token AFTER commit
+            # Now link parent → child
+            old_token.child_jti = new_refresh.jti
+            old_token.status = TokenStatus.USED
+            old_token.used_at = now
+            old_token.revoked = True
+            old_token.revoked_at = now
+
+        # 6️⃣ Issue new access token after commit
         access = create_access_token(
             user_id=str(old_token.user_id),
             email=old_token.user.email,
@@ -372,6 +381,5 @@ def refresh_token_endpoint(validated_data):
 
     except ApplicationError:
         raise
-
     except Exception as e:
         raise ApplicationError(str(e))

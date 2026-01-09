@@ -37,6 +37,12 @@ class UserRole(Enum):
     ADMIN = "admin"
 
 
+class TokenStatus(Enum):
+    ACTIVE = "active"
+    USED = "used"
+    REVOKED = "revoked"
+
+
 class User(Base):
     """User model for the `users` table"""
 
@@ -174,6 +180,12 @@ class RefreshToken(Base):
         index=True,
     )
 
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+
     parent_jti: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("refresh_tokens.jti", ondelete="SET NULL"),
@@ -214,6 +226,17 @@ class RefreshToken(Base):
     used_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+
+    status: Mapped[TokenStatus] = mapped_column(
+        SAEnum(
+            TokenStatus,
+            name="tokenstatus",
+            native_enum=True,
+            create_type=False,  # important once enum exists
+        ),
+        nullable=False,
+        default=TokenStatus.ACTIVE,
     )
 
     ip_address: Mapped[Optional[str]] = mapped_column(
