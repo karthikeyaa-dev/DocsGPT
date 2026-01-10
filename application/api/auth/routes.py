@@ -254,14 +254,17 @@ def refresh_token_endpoint(validated_data):
     refresh_token_str = validated_data.refresh_token
     device_id = validated_data.device_id
 
+    # INFO : This has to be placed by the client(Java-Script)
     if not device_id:
         raise MissingDeviceID()
 
+    # INFO : Here ip_address and user_agent will be replicated in next version as we use fingerprint.js
     ip_address = (
         request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
         or request.remote_addr
     )
     user_agent = request.headers.get("User-Agent")
+
     now = datetime.now(timezone.utc)
 
     # 1️⃣ Decode refresh token
@@ -328,6 +331,7 @@ def refresh_token_endpoint(validated_data):
                 )
 
             # 5️⃣ Normal rotation (first valid use)
+            # INFO : Here we will use the fingerprint.js to validate the user
             if audit_token_environment(old_token, ip_address, user_agent):
                 db.session.query(RefreshToken).filter_by(
                     session_id=old_token.session_id
@@ -335,7 +339,6 @@ def refresh_token_endpoint(validated_data):
                 raise TokenError("Suspicious refresh attempt detected.")
 
             # Mark old token as USED
-
             # Create new refresh token
             new_refresh_jwt = create_refresh_token(user_id=str(user_id))
             new_refresh = RefreshToken(
