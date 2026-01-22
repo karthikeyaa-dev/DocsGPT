@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from uuid import uuid4
 from uuid import UUID
-from typing import Optional, List
+fromtyping import Optional, List
 from application.api.auth.models import (
     User,
     RefreshToken,
@@ -18,6 +18,7 @@ from application.api.auth.users.schema import (
     TokenPair,
     LoginResponse,
 )
+from application.api.auth.utils.hmac import encode_token
 from application.api.auth.users.exceptions import TokenError
 from application.api.auth.config import CONFIG
 
@@ -323,3 +324,15 @@ def recreate_refresh_token(refresh_token: RefreshToken) -> RefreshTokenSchema:
     )
 
     return TokenPair(access=access, refresh=refresh)"""
+
+
+def generate_email_verification_token(user_id: int) -> str:
+    payload = {
+        "uid": user_id,
+        "exp": int(time.time()) + 15*60,  # 15 minutes expiry
+        "nonce": secrets.token_hex(8)
+    }
+    # Encode payload + HMAC signature
+    token = encode_token(payload)
+    return token, payload
+

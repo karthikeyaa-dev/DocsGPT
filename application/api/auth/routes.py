@@ -30,6 +30,10 @@ from application.api.auth.users.exceptions import (
 from application.api.auth.utils.validation_schema import validate_schema
 from application.extensions import db
 from application.api.auth.utils.hash import get_password_hash
+from application.api.auth.utils.hmac import (
+    sign,
+    verify,
+)
 from application.api.auth.users.jwt import (
     create_token_pair,
     save_refresh_token,
@@ -42,6 +46,7 @@ from application.api.auth.users.jwt import (
     recreate_refresh_token,
     rotate_refresh_token,
     audit_token_environment,
+    generate_email_verfication_token,
 )
 from datetime import datetime, timezone
 from uuid import UUID
@@ -64,6 +69,10 @@ def register_user(validated_data):
                 is_active=True,
             )
             db.session.add(user)
+
+            db.session.flush()
+
+            token, payload = generate_email_verfication_token(user.id)
 
         return UserResponse(
             id=user.id,
