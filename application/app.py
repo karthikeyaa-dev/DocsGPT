@@ -30,6 +30,13 @@ def create_app():
         "postgresql://user:password@localhost:5432/docsgpt"
     )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "pool_size": 10,          # persistent connections
+        "max_overflow": 20,       # extra connections under load
+        "pool_timeout": 30,       # seconds to wait before error
+        "pool_recycle": 1800,     # recycle connections (Postgres-safe)
+        "pool_pre_ping": True,    # avoid stale connections
+    }
     app.config["UPLOAD_FOLDER"] = "inputs"
     app.config.update(
         CELERY_BROKER_URL=settings.CELERY_BROKER_URL,
