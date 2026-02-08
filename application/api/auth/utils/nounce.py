@@ -25,7 +25,7 @@ def store_nonce(payload: dict) -> str:
         raise ValueError("Token already expired")
 
     # Store in Redis with TTL
-    redis_client.set(f"email_verify:{nonce}", user_id, ex=ttl)
+    await redis_client.set(f"email_verify:{nonce}", user_id, ex=ttl)
 
     return nonce
 
@@ -42,13 +42,13 @@ def consume_nonce(nonce: str) -> int | None:
     key = f"email_verify:{nonce}"
     
     # Get the user_id
-    user_id = redis_client.get(key)
+    user_id = await redis_client.get(key)
     
     if user_id is None:
         # Token does not exist or already used
         return None
 
     # Delete the key immediately to prevent reuse
-    redis_client.delete(key)
+    await redis_client.delete(key)
     
     return int(user_id)
