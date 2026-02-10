@@ -6,9 +6,11 @@ setup(
     packages=find_packages(),
     entry_points={
         "email_service.plugins": [
-            "gmail = email_services.plugins.google.plugin:GmailPlugin",
-            "sendgrid = email_services.plugins.sendgrid.plugin:SendgridPlugin",
-            "amazonsns = email_services.plugins.amazon.plugin:AmazonSNS",
+            "gmail = email_services.plugins.google.plugin:GoogleCloudGmailPlugin",
+            "sendgrid = email_services.plugins.sendgrid.plugin:SendGridPlugin",
+            "customSMTP = email_services.plugins.customSMTP.plugin:CustomSMTPPlugin",
+            "amazonsns = email_services.plugins.amazon.plugin:AmazonSNSPlugin",
+            "mailgun = email_services.plugins.mailgun.plugin:MailgunPlugin", 
         ]
     },
 )

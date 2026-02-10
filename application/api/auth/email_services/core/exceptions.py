@@ -1,0 +1,2 @@
+class EmailServiceError(Exception):
+    pass
